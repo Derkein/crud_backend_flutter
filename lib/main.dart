@@ -1,20 +1,41 @@
-import 'package:flutter/material.dart';
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as io;
+import 'routes/person_routes.dart';
+import 'routes/auth_routes.dart';
+import 'services/auth_service.dart';
 
-void main() {
-  runApp(const MainApp());
+final AuthService _authService = AuthService();
+
+/// Middleware que valida tokens JWT
+Middleware verifyJWT() {
+  return (Handler innerHandler) {
+    return (Request request) async {
+      final authHeader = request.headers['Authorization'];
+      if (authHeader == null || !authHeader.startsWith('Bearer ')) {
+        return Response.unauthorized('Token JWT ausente');
+      }
+
+      final token = authHeader.substring(7);
+      if (!_authService.verifyToken(token)) {
+        return Response.unauthorized('Token JWT inválido');
+      }
+
+      return innerHandler(request);
+    };
+  };
 }
 
-class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+void main() async {
+  final authRoutes = AuthRoutes();
+  final personRoutes = PersonRoutes();
 
-  @override
-  Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text('Hello World!'),
-        ),
-      ),
-    );
-  }
+  final handler = Pipeline()
+      .addMiddleware(logRequests())
+      .addHandler(Cascade()
+          .add(authRoutes.router)
+          .add(verifyJWT().addHandler(personRoutes.router)) // 🔒 Protegendo rotas de pessoas
+          .handler);
+
+  final server = await io.serve(handler, 'localhost', 3000);
+  print('Servidor rodando em http://${server.address.host}:${server.port}');
 }
